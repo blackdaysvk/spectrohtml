@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Ultrazvukový Audio Spektrogram</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0e1117;
+            color: #e3e6eb;
+            overflow: hidden;
+            height: 100vh;
+            height: 100dvh; 
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            background: #161b22;
+            padding: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            border-bottom: 1px solid #21262d;
+            flex-shrink: 0;
+        }
+        
+        .controls-row {
+            background: #161b22;
+            padding: 8px 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            border-bottom: 1px solid #21262d;
+            flex-shrink: 0;
+        }
+        
+        .btn {
+            background: #238636;
+            color: white;
+            padding: 8px 14px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .btn:hover { background: #2ea043; }
+        .btn:disabled { background: #21262d; color: #8b949e; cursor: not-allowed; }
+        .btn-play { background: #1f6feb; }
+        .btn-play:hover { background: #388bfd; }
+        .btn-stop { background: #da3633; }
+        .btn-stop:hover { background: #f85149; }
+        
+        .btn-nav {
+            background: #30363d;
+            color: #c9d1d9;
+            border: 1px solid #484f58;
+            padding: 6px 12px;
+            font-size: 13px;
+            min-width: 38px;
+        }
+        .btn-nav:hover { background: #3c444d; border-color: #8b949e; }
+        
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: #0e1117;
+            padding: 4px;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+        }
+        .group-label {
+            font-size: 11px;
+            color: #8b949e;
+            text-transform: uppercase;
+            padding: 0 4px;
+            font-weight: bold;
+        }
+
+        .grid-toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: #c9d1d9;
+            cursor: pointer;
+            user-select: none;
+            margin-left: auto;
+            background: #21262d;
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+        }
+        .grid-toggle-container input {
+            cursor: pointer;
+            accent-color: #238636;
+        }
+
+        input[type="file"] { display: none; }
+        select {
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 8px;
+            border-radius: 6px;
+            outline: none;
+            font-size: 14px;
+        }
+        #status {
+            font-size: 13px;
+            color: #8b949e;
+            flex-grow: 1;
+            text-align: right;
+            padding-right: 5px;
+        }
+        
+        #app-layout {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        #main-area {
+            display: flex;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+        
+        #y-axis { background: #0e1117; flex-shrink: 0; width: 65px; z-index: 6; }
+        
+        #canvas-viewport {
+            flex-grow: 1;
+            position: relative;
+            overflow: hidden;
+            background: #000;
+            touch-action: none;
+        }
+        
+        canvas#spectrogram {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform-origin: top left;
+        }
+        
+        #selection-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 5;
+        }
+        
+        #x-row {
+            display: flex;
+            height: 35px;
+            background: #0e1117;
+            flex-shrink: 0;
+            border-top: 1px solid #21262d;
+            z-index: 6;
+        }
+        #x-spacer { width: 65px; flex-shrink: 0; background: #0e1117; }
+        #x-axis { flex-grow: 1; background: #0e1117; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <label class="btn">
+            Vybrať WAV
+            <input type="file" id="audio-file" accept="audio/wav,audio/x-wav">
+        </label>
+        
+        <button id="btn-play" class="btn btn-play" disabled>Prehrať všetko</button>
+        <button id="btn-clear-selection" class="btn" style="background:#30363d; display:none;">Zrušiť výber</button>
+        
+        <select id="play-speed">
+            <option value="1">Rýchlosť: 1x</option>
+            <option value="0.1" selected>Rýchlosť: 0.1x (Pre ultrazvuk)</option>
+            <option value="0.2">Rýchlosť: 0.2x</option>
+            <option value="0.5">Rýchlosť: 0.5x</option>
+        </select>
+
+        <select id="sr-override">
+            <option value="auto" selected>Vzorkovanie: Auto (Zo súboru)</option>
+            <option value="192000">Vynútiť 192 kHz (Max: 96 kHz)</option>
+            <option value="256000">Vynútiť 256 kHz (Max: 128 kHz)</option>
+            <option value="384000">Vynútiť 384 kHz (Max: 192 kHz)</option>
+            <option value="500000">Vynútiť 500 kHz (Max: 250 kHz)</option>
+        </select>
+
+        <select id="palette">
+            <option value="magma">Magma</option>
+            <option value="inferno">Inferno</option>
+            <option value="viridis">Viridis</option>
+            <option value="grayscale">Čiernobiela</option>
+        </select>
+
+        <div id="status">Vyberte audio súbor na analýzu.</div>
+    </header>
+
+    <div class="controls-row">
+        <div class="control-group">
+            <span class="group-label">Zoom Čas (X)</span>
+            <button class="btn btn-nav" onclick="buttonZoom('X', 1.5)">+</button>
+            <button class="btn btn-nav" onclick="buttonZoom('X', 1/1.5)">-</button>
+        </div>
+
+        <div class="control-group">
+            <span class="group-label">Zoom Freq (Y)</span>
+            <button class="btn btn-nav" onclick="buttonZoom('Y', 1.5)">+</button>
+            <button class="btn btn-nav" onclick="buttonZoom('Y', 1/1.5)">-</button>
+        </div>
+
+        <div class="control-group">
+            <span class="group-label">Posun</span>
+            <button class="btn btn-nav" onclick="buttonPan('left')">◀</button>
+            <button class="btn btn-nav" onclick="buttonPan('up')">▲</button>
+            <button class="btn btn-nav" onclick="buttonPan('down')">▼</button>
+            <button class="btn btn-nav" onclick="buttonPan('right')">▶</button>
+        </div>
+        
+        <button class="btn btn-nav" style="background: #a37113; color: white; border: none;" onclick="resetView()">Reset</button>
+
+        <label class="grid-toggle-container">
+            <input type="checkbox" id="toggle-grid" checked>
+            <span>Zobraziť mriežku</span>
+        </label>
+    </div>
+
+    <div id="app-layout">
+        <div id="main-area">
+            <canvas id="y-axis"></canvas>
+            <div id="canvas-viewport">
+                <canvas id="spectrogram"></canvas>
+                <canvas id="selection-overlay"></canvas>
+            </div>
+        </div>
+        <div id="x-row">
+            <div id="x-spacer"></div>
+            <canvas id="x-axis"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let audioCtx = null;
+        let globalAudioBuffer = null;
+        let rawAudioDataArray = null; 
+        let audioSource = null;
+        let spectrogramMatrix = [];
+        let sampleRate = 44100; 
+        let duration = 0;
+        let isPlaying = false;
+
+        let playStartTime = 0;
+        let playOffset = 0;
+        let animationFrameId = null;
+
+        let scaleX = 1, scaleY = 1;
+        let posX = 0, posY = 0;
+        let isDragging = false;
+        let startX, startY;
+
+        let selectionStart = null;
+        let selectionEnd = null;
+        let isSelecting = false;
+
+        let initialTouchDistX = 0, initialTouchDistY = 0;
+        let initialScaleX = 1, initialScaleY = 1;
+        let touchMidX = 0, touchMidY = 0;
+
+        // Optimalizačná vlajka, aby sme nepreťažovali procesor pri ťahaní prsta
+        let renderRequested = false;
+
+        const fileInput = document.getElementById('audio-file');
+        const paletteSelect = document.getElementById('palette');
+        const playSpeedSelect = document.getElementById('play-speed');
+        const srOverrideSelect = document.getElementById('sr-override');
+        const toggleGridCheckbox = document.getElementById('toggle-grid');
+        const btnPlay = document.getElementById('btn-play');
+        const btnClearSelection = document.getElementById('btn-clear-selection');
+        const statusDiv = document.getElementById('status');
+        const viewport = document.getElementById('canvas-viewport');
+        const canvas = document.getElementById('spectrogram');
+        const ctx = canvas.getContext('2d');
+        const xAxisCanvas = document.getElementById('x-axis');
+        const yAxisCanvas = document.getElementById('y-axis');
+        const overlayCanvas = document.getElementById('selection-overlay');
+        const overlayCtx = overlayCanvas.getContext('2d');
+
+        window.addEventListener('resize', resizeCanvases);
+        paletteSelect.addEventListener('change', () => { if(spectrogramMatrix.length > 0) drawSpectrogram(); });
+        srOverrideSelect.addEventListener('change', processAudioData); 
+        toggleGridCheckbox.addEventListener('change', () => { requestRender(); });
+        
+        playSpeedSelect.addEventListener('change', () => {
+            if (isPlaying && audioSource) {
+                audioSource.playbackRate.value = parseFloat(playSpeedSelect.value);
+            }
+        });
+
+        btnClearSelection.addEventListener('click', () => {
+            selectionStart = null;
+            selectionEnd = null;
+            btnClearSelection.style.display = 'none';
+            btnPlay.innerText = "Prehrať všetko";
+            requestRender();
+        });
+
+        btnPlay.addEventListener('click', () => {
+            if (!globalAudioBuffer) return;
+            if (isPlaying) { stopAudio(); } else { playAudio(); }
+        });
+
+        function initAudioContext(targetSampleRate) {
+            if (!audioCtx || audioCtx.sampleRate !== targetSampleRate) {
+                if (audioCtx) { audioCtx.close(); }
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+                    latencyHint: 'balanced',
+                    sampleRate: targetSampleRate
+                });
+            }
+        }
+
+        function playAudio() {
+            if (!globalAudioBuffer) return;
+            initAudioContext(globalAudioBuffer.sampleRate);
+            if (audioCtx.state === 'suspended') { audioCtx.resume(); }
+
+            audioSource = audioCtx.createBufferSource();
+            audioSource.buffer = globalAudioBuffer;
+            
+            const speed = parseFloat(playSpeedSelect.value);
+            audioSource.playbackRate.value = speed;
+            audioSource.connect(audioCtx.destination);
+            
+            audioSource.onended = () => {
+                cancelAnimationFrame(animationFrameId);
+                isPlaying = false;
+                updatePlayButtonText();
+                requestRender();
+            };
+
+            let offset = 0;
+            let playDuration = duration;
+
+            if (selectionStart !== null && selectionEnd !== null) {
+                offset = Math.min(selectionStart, selectionEnd);
+                playDuration = Math.abs(selectionEnd - selectionStart);
+            }
+
+            if (offset < 0) offset = 0;
+            if (offset + playDuration > duration) playDuration = duration - offset;
+
+            audioSource.start(0, offset, playDuration);
+            isPlaying = true;
+            
+            playStartTime = audioCtx.currentTime;
+            playOffset = offset;
+
+            btnPlay.innerText = "Zastaviť";
+            btnPlay.className = "btn btn-stop";
+
+            updatePlaybackProgress();
+        }
+
+        function stopAudio() {
+            if (audioSource) {
+                try { audioSource.stop(); } catch(e) {}
+                audioSource.disconnect();
+                audioSource = null;
+            }
+            cancelAnimationFrame(animationFrameId);
+            isPlaying = false;
+            updatePlayButtonText();
+            requestRender();
+        }
+
+        function updatePlayButtonText() {
+            btnPlay.className = "btn btn-play";
+            if (selectionStart !== null && selectionEnd !== null) {
+                btnPlay.innerText = "Prehrať výber";
+            } else {
+                btnPlay.innerText = "Prehrať všetko";
+            }
+        }
+
+        function updatePlaybackProgress() {
+            if (!isPlaying) return;
+            drawAxesAndOverlay();
+            animationFrameId = requestAnimationFrame(updatePlaybackProgress);
+        }
+
+        function pixelToSeconds(clientX) {
+            const rect = viewport.getBoundingClientRect();
+            const canvasX = clientX - rect.left;
+            const graphX = (canvasX - posX) / scaleX;
+            const ratio = graphX / canvas.width;
+            return Math.max(0, Math.min(ratio * duration, duration));
+        }
+
+        // Spája prepočet a požiadavku na plynulé prekreslenie osí do jedného render bloku
+        function requestRender() {
+            if (!renderRequested) {
+                renderRequested = true;
+                requestAnimationFrame(() => {
+                    canvas.style.transform = `translate(${posX}px, ${posY}px) scale(${scaleX}, ${scaleY})`;
+                    drawAxesAndOverlay();
+                    renderRequested = false;
+                });
+            }
+        }
+
+        function buttonZoom(axis, factor) {
+            if (spectrogramMatrix.length === 0) return;
+            const midX = viewport.clientWidth / 2;
+            const midY = viewport.clientHeight / 2;
+            const graphX = (midX - posX) / scaleX;
+            const graphY = (midY - posY) / scaleY;
+            
+            if (axis === 'X') {
+                scaleX = Math.max(0.1, Math.min(scaleX * factor, 2000));
+                posX = midX - graphX * scaleX;
+            } else if (axis === 'Y') {
+                scaleY = Math.max(0.1, Math.min(scaleY * factor, 1000));
+                posY = midY - graphY * scaleY;
+            }
+            constrainBounds();
+            requestRender();
+        }
+
+        function buttonPan(direction) {
+            if (spectrogramMatrix.length === 0) return;
+            const stepX = viewport.clientWidth * 0.25;
+            const stepY = viewport.clientHeight * 0.25;
+            
+            if (direction === 'left')  posX += stepX;
+            if (direction === 'right') posX -= stepX;
+            if (direction === 'up')    posY += stepY;
+            if (direction === 'down')  posY -= stepY;
+            
+            constrainBounds();
+            requestRender();
+        }
+
+        function resetView() {
+            if (spectrogramMatrix.length === 0) return;
+            scaleX = viewport.clientWidth / canvas.width;
+            scaleY = viewport.clientHeight / canvas.height;
+            posX = 0;
+            posY = 0;
+            requestRender();
+        }
+
+        // --- MYŠ A DOTYKY ---
+        viewport.addEventListener('mousedown', (e) => {
+            if (spectrogramMatrix.length === 0) return;
+            if (e.button === 2 || e.shiftKey) {
+                e.preventDefault();
+                isSelecting = true;
+                selectionStart = pixelToSeconds(e.clientX);
+                selectionEnd = selectionStart;
+            } else if (e.button === 0) {
+                isDragging = true;
+                startX = e.clientX - posX;
+                startY = e.clientY - posY;
+            }
+        });
+
+        viewport.addEventListener('contextmenu', e => e.preventDefault());
+
+        window.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                posX = e.clientX - startX;
+                posY = e.clientY - startY;
+                constrainBounds();
+                requestRender();
+            } else if (isSelecting) {
+                selectionEnd = pixelToSeconds(e.clientX);
+                btnClearSelection.style.display = 'inline-block';
+                updatePlayButtonText();
+                requestRender();
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+            isSelecting = false;
+        });
+
+        viewport.addEventListener('wheel', (e) => {
+            if (spectrogramMatrix.length === 0) return;
+            e.preventDefault();
+            const rect = viewport.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            const graphX = (mouseX - posX) / scaleX;
+            const graphY = (mouseY - posY) / scaleY;
+            const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+            
+            if (e.ctrlKey) {
+                scaleY = Math.max(0.1, Math.min(scaleY * zoomFactor, 1000));
+            } else {
+                scaleX = Math.max(0.1, Math.min(scaleX * zoomFactor, 2000));
+            }
+            posX = mouseX - graphX * scaleX;
+            posY = mouseY - graphY * scaleY;
+            constrainBounds();
+            requestRender();
+        });
+
+        let touchStartSelfTime = 0;
+        viewport.addEventListener('touchstart', (e) => {
+            if (spectrogramMatrix.length === 0) return;
+            if (e.touches.length === 1) {
+                touchStartSelfTime = Date.now();
+                isDragging = true;
+                startX = e.touches[0].clientX - posX;
+                startY = e.touches[0].clientY - posY;
+            } else if (e.touches.length === 2) {
+                isDragging = false; isSelecting = false;
+                const t1 = e.touches[0]; const t2 = e.touches[1];
+                initialTouchDistX = Math.abs(t1.clientX - t2.clientX);
+                initialTouchDistY = Math.abs(t1.clientY - t2.clientY);
+                initialScaleX = scaleX; initialScaleY = scaleY;
+                const rect = viewport.getBoundingClientRect();
+                touchMidX = ((t1.clientX + t2.clientX) / 2) - rect.left;
+                touchMidY = ((t1.clientY + t2.clientY) / 2) - rect.top;
+            }
+        });
+
+        viewport.addEventListener('touchmove', (e) => {
+            if (spectrogramMatrix.length === 0) return;
+            if (e.touches.length === 1 && isDragging) {
+                // Ak používateľ drží prst dlhšie ako 250ms bez pohybu, aktivuje sa výber (nahrada za Shift+klik na PC)
+                if (Date.now() - touchStartSelfTime > 250) {
+                    if(!isSelecting) {
+                        isSelecting = true;
+                        selectionStart = pixelToSeconds(e.touches[0].clientX);
+                    }
+                    selectionEnd = pixelToSeconds(e.touches[0].clientX);
+                    btnClearSelection.style.display = 'inline-block';
+                    updatePlayButtonText();
+                    requestRender();
+                } else {
+                    posX = e.touches[0].clientX - startX;
+                    posY = e.touches[0].clientY - startY;
+                    constrainBounds();
+                    requestRender();
+                }
+            } else if (e.touches.length === 2) {
+                const t1 = e.touches[0]; const t2 = e.touches[1];
+                const currentDistX = Math.abs(t1.clientX - t2.clientX);
+                const currentDistY = Math.abs(t1.clientY - t2.clientY);
+                const graphX = (touchMidX - posX) / scaleX;
+                const graphY = (touchMidY - posY) / scaleY;
+
+                if (initialTouchDistX > 20 && currentDistX > 5) {
+                    scaleX = Math.max(0.1, Math.min(initialScaleX * (currentDistX / initialTouchDistX), 2000));
+                }
+                if (initialTouchDistY > 20 && currentDistY > 5) {
+                    scaleY = Math.max(0.1, Math.min(initialScaleY * (currentDistY / initialTouchDistY), 1000));
+                }
+                posX = touchMidX - graphX * scaleX;
+                posY = touchMidY - graphY * scaleY;
+                constrainBounds();
+                requestRender();
+            }
+        });
+
+        viewport.addEventListener('touchend', () => { isDragging = false; isSelecting = false; });
+
+        // --- AUDIO ENGINE ---
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            stopAudio();
+            btnPlay.disabled = true;
+            selectionStart = null; selectionEnd = null;
+            btnClearSelection.style.display = 'none';
+            statusDiv.innerText = "Načítavam audio...";
+            
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                rawAudioDataArray = evt.target.result; 
+                processAudioData();
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        function processAudioData() {
+            if (!rawAudioDataArray) return;
+            
+            statusDiv.innerText = "Dekódujem audio dáta...";
+            const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            tempCtx.decodeAudioData(rawAudioDataArray.slice(0))
+                .then(audioBuffer => {
+                    globalAudioBuffer = audioBuffer;
+                    sampleRate = audioBuffer.sampleRate;
+                    duration = audioBuffer.duration;
+
+                    const overrideValue = srOverrideSelect.value;
+                    if (overrideValue !== "auto") {
+                        const forcedSR = parseInt(overrideValue);
+                        duration = (audioBuffer.length / forcedSR);
+                        sampleRate = forcedSR;
+                    }
+
+                    statusDiv.innerText = `Počítam spektrogram...`;
+                    setTimeout(() => {
+                        runSTFT(audioBuffer);
+                        btnPlay.disabled = false;
+                        updatePlayButtonText();
+                    }, 50);
+                    tempCtx.close();
+                })
+                .catch(err => {
+                    statusDiv.innerText = "Chyba spracovania.";
+                    console.error(err);
+                    tempCtx.close();
+                });
+        }
+
+        function runSTFT(audioBuffer) {
+            const signal = audioBuffer.getChannelData(0); 
+            const fftSize = 2048; 
+            const hopSize = 512;  
+            const numWindows = Math.floor((signal.length - fftSize) / hopSize);
+            spectrogramMatrix = [];
+
+            const windowFn = new Float32Array(fftSize);
+            for (let i = 0; i < fftSize; i++) {
+                windowFn[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (fftSize - 1)));
+            }
+
+            const real = new Float32Array(fftSize);
+            const imag = new Float32Array(fftSize);
+
+            for (let w = 0; w < numWindows; w++) {
+                const offset = w * hopSize;
+                for (let i = 0; i < fftSize; i++) {
+                    real[i] = signal[offset + i] * windowFn[i];
+                    imag[i] = 0;
+                }
+                simpleFFT(real, imag);
+                const numBins = fftSize / 2;
+                const windowFrame = new Float32Array(numBins);
+                for (let b = 0; b < numBins; b++) {
+                    const magnitude = Math.sqrt(real[b]*real[b] + imag[b]*imag[b]);
+                    let db = 20 * Math.log10(magnitude + 1e-6);
+                    windowFrame[b] = db < -120 ? -120 : db;
+                }
+                spectrogramMatrix.push(windowFrame);
+            }
+
+            window.visualMaxFreq = sampleRate / 2;
+            statusDiv.innerText = `Max rozsah nahrávky: ${(window.visualMaxFreq/1000).toFixed(1)} kHz.`;
+
+            scaleX = viewport.clientWidth / canvas.width;
+            scaleY = viewport.clientHeight / canvas.height;
+            posX = 0; posY = 0;
+            
+            resizeCanvases();
+        }
+
+        function simpleFFT(real, imag) {
+            const n = real.length; let bits = Math.log2(n);
+            for (let i = 0; i < n; i++) {
+                let j = 0;
+                for (let b = 0; b < bits; b++) { if ((i >> b) & 1) j |= (1 << (bits - 1 - b)); }
+                if (j > i) {
+                    let tempR = real[i]; real[i] = real[j]; real[j] = tempR;
+                    let tempI = imag[i]; imag[i] = imag[j]; imag[j] = tempI;
+                }
+            }
+            for (let len = 2; len <= n; len <<= 1) {
+                let angle = -2 * Math.PI / len;
+                let wlenR = Math.cos(angle); let wlenI = Math.sin(angle);
+                for (let i = 0; i < n; i += len) {
+                    let wR = 1; let wI = 0;
+                    for (let j = 0; j < len / 2; j++) {
+                        let uR = real[i + j]; let uI = imag[i + j];
+                        let vR = real[i + j + len / 2] * wR - imag[i + j + len / 2] * wI;
+                        let vI = real[i + j + len / 2] * wI + imag[i + j + len / 2] * wR;
+                        real[i + j] = uR + vR; imag[i + j] = uI + vI;
+                        real[i + j + len / 2] = uR - vR; imag[i + j + len / 2] = uI - vI;
+                        let nextWR = wR * wlenR - wI * wlenI; wI = wR * wlenI + wI * wlenR; wR = nextWR;
+                    }
+                }
+            }
+        }
+
+        function drawSpectrogram() {
+            if (spectrogramMatrix.length === 0) return;
+            const numWindows = spectrogramMatrix.length;
+            const numBins = spectrogramMatrix[0].length;
+            
+            canvas.width = numWindows; canvas.height = numBins;
+            const imgData = ctx.createImageData(numWindows, numBins);
+            let min = 100, max = -100;
+            for(let w=0; w<numWindows; w++) {
+                for(let b=0; b<numBins; b++) {
+                    if(spectrogramMatrix[w][b] < min) min = spectrogramMatrix[w][b];
+                    if(spectrogramMatrix[w][b] > max) max = spectrogramMatrix[w][b];
+                }
+            }
+            const range = max - min; const palette = paletteSelect.value;
+
+            for(let w=0; w<numWindows; w++) {
+                for(let b=0; b<numBins; b++) {
+                    const db = spectrogramMatrix[w][b];
+                    const norm = range > 0 ? (db - min) / range : 0;
+                    const rgbStr = getColor(norm, palette); const rgb = rgbStr.match(/\d+/g);
+                    const pixelIdx = ((numBins - 1 - b) * numWindows + w) * 4;
+                    imgData.data[pixelIdx] = parseInt(rgb[0]); imgData.data[pixelIdx+1] = parseInt(rgb[1]);
+                    imgData.data[pixelIdx+2] = parseInt(rgb[2]); imgData.data[pixelIdx+3] = 255;
+                }
+            }
+            ctx.putImageData(imgData, 0, 0);
+            requestRender();
+        }
+
+        function getColor(v, type) {
+            if(type === 'grayscale') { let g = Math.floor(v * 255); return `rgb(${g},${g},${g})`; }
+            if(type === 'viridis') { return `rgb(${Math.floor(v*253)}, ${Math.floor(v*231)}, ${Math.floor(37 + v*120)})`; }
+            if(type === 'inferno') { return `rgb(${Math.floor(v*255)}, ${Math.floor(v*v*255)}, ${Math.floor(v*v*v*100)})`; }
+            return `rgb(${Math.floor(Math.pow(v,1.5)*255)}, ${Math.floor(Math.pow(v,3)*200)}, ${Math.floor(v*120)})`;
+        }
+
+        function constrainBounds() {
+            const viewW = viewport.clientWidth; const viewH = viewport.clientHeight;
+            const graphW = canvas.width * scaleX; const graphH = canvas.height * scaleY;
+            const paddingX = viewW * 0.5; const paddingY = viewH * 0.5;
+
+            if (posX > paddingX) posX = paddingX;
+            if (posX < viewW - graphW - paddingX) posX = viewW - graphW - paddingX;
+            if (posY > paddingY) posY = paddingY;
+            if (posY < viewH - graphH - paddingY) posY = viewH - graphH - paddingY;
+        }
+
+        function resizeCanvases() {
+            const rect = viewport.getBoundingClientRect();
+            xAxisCanvas.width = rect.width; xAxisCanvas.height = 35;
+            yAxisCanvas.width = 65; yAxisCanvas.height = rect.height;
+            overlayCanvas.width = rect.width; overlayCanvas.height = rect.height;
+            if (spectrogramMatrix.length > 0) drawSpectrogram(); else drawAxesAndOverlay();
+        }
+
+        function getNiceStep(visibleRange, maxTicks) {
+            const rawStep = visibleRange / maxTicks;
+            if (rawStep <= 0) return 1;
+            const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+            const residual = rawStep / magnitude;
+            let cleanStep;
+            if (residual < 1.5) cleanStep = 1;
+            else if (residual < 3.5) cleanStep = 2;
+            else if (residual < 7.5) cleanStep = 5;
+            else cleanStep = 10;
+            return cleanStep * magnitude;
+        }
+
+        // KĽÚČOVÁ OPRAVA: Prepracované koordináty okna a mriežky, potlačené sekanie
+        function drawAxesAndOverlay() {
+            const yCtx = yAxisCanvas.getContext('2d');
+            yCtx.clearRect(0, 0, yAxisCanvas.width, yAxisCanvas.height);
+            yCtx.fillStyle = '#8b949e'; yCtx.font = '10px sans-serif'; yCtx.textAlign = 'right';
+            
+            const viewW = overlayCanvas.width;
+            const viewH = overlayCanvas.height;
+            
+            overlayCtx.clearRect(0, 0, viewW, viewH);
+            
+            const maxFreq = window.visualMaxFreq || (sampleRate / 2);
+            const showGrid = toggleGridCheckbox.checked;
+
+            if (spectrogramMatrix.length > 0) {
+                // Presný prepočet aktuálne viditeľného frekvenčného okna na osi Y
+                const totalGraphHeight = canvas.height * scaleY;
+                const maxVisibleFreq = Math.max(0, Math.min(maxFreq, ((-posY) / totalGraphHeight) * maxFreq));
+                const minVisibleFreq = Math.max(0, Math.min(maxFreq, (((viewH - posY) / totalGraphHeight) * maxFreq)));
+                
+                const fRange = Math.abs(maxVisibleFreq - minVisibleFreq);
+                const freqStep = getNiceStep(fRange, Math.max(3, Math.floor(viewH / 50)));
+                
+                // Zaokrúhlenie štartovacieho bodu kreslenia dielikov
+                const startF = Math.floor(Math.min(minVisibleFreq, maxVisibleFreq) / freqStep) * freqStep;
+                const endF = Math.ceil(Math.max(minVisibleFreq, maxVisibleFreq) / freqStep) * freqStep;
+
+                for (let f = startF; f <= endF; f += freqStep) {
+                    if (f < 0 || f > maxFreq) continue;
+                    
+                    const ratio = f / maxFreq;
+                    // Výška na plátne otočená zrkadlovo (0 Hz je dole, maxFreq hore)
+                    const viewY = (canvas.height - (ratio * canvas.height)) * scaleY + posY;
+
+                    if (viewY >= 0 && viewY <= yAxisCanvas.height) {
+                        const label = f >= 1000 ? (f/1000).toFixed(1) + ' kHz' : Math.floor(f) + ' Hz';
+                        yCtx.fillText(label, yAxisCanvas.width - 8, viewY + 4);
+                        
+                        yCtx.strokeStyle = '#21262d'; yCtx.beginPath(); yCtx.moveTo(yAxisCanvas.width - 5, viewY); yCtx.lineTo(yAxisCanvas.width, viewY); yCtx.stroke();
+                        
+                        if (showGrid) {
+                            overlayCtx.strokeStyle = 'rgba(48, 54, 61, 0.35)';
+                            overlayCtx.lineWidth = 1;
+                            overlayCtx.beginPath(); overlayCtx.moveTo(0, viewY); overlayCtx.lineTo(viewW, viewY); overlayCtx.stroke();
+                        }
+                    }
+                }
+            }
+
+            const xCtx = xAxisCanvas.getContext('2d');
+            xCtx.clearRect(0, 0, xAxisCanvas.width, xAxisCanvas.height);
+            xCtx.fillStyle = '#c9d1d9'; xCtx.font = '11px sans-serif'; xCtx.textAlign = 'center';
+
+            if (spectrogramMatrix.length > 0) {
+                const totalGraphWidth = canvas.width * scaleX;
+                const minVisibleTime = (-posX / totalGraphWidth) * duration;
+                const maxVisibleTime = ((viewW - posX) / totalGraphWidth) * duration;
+                const tRange = maxVisibleTime - minVisibleTime;
+                
+                const timeStep = getNiceStep(tRange, Math.max(3, Math.floor(viewW / 80)));
+                
+                const startT = Math.floor(minVisibleTime / timeStep) * timeStep;
+                const endT = Math.ceil(maxVisibleTime / timeStep) * timeStep;
+
+                let decimals = 2;
+                if (timeStep < 0.001) decimals = 4;
+                else if (timeStep < 0.01) decimals = 3;
+                else if (timeStep < 0.1) decimals = 2;
+
+                for (let t = startT; t <= endT; t += timeStep) {
+                    if (t < 0 || t > duration) continue;
+                    const ratio = t / duration;
+                    const viewX = (ratio * canvas.width) * scaleX + posX;
+
+                    if (viewX >= 0 && viewX <= xAxisCanvas.width) {
+                        xCtx.fillText(t.toFixed(decimals) + 's', viewX, 20);
+                        xCtx.strokeStyle = '#30363d'; xCtx.beginPath(); xCtx.moveTo(viewX, 0); xCtx.lineTo(viewX, 6); xCtx.stroke();
+                        
+                        if (showGrid) {
+                            overlayCtx.strokeStyle = 'rgba(48, 54, 61, 0.35)';
+                            overlayCtx.lineWidth = 1;
+                            overlayCtx.beginPath(); overlayCtx.moveTo(viewX, 0); overlayCtx.lineTo(viewX, viewH); overlayCtx.stroke();
+                        }
+                    }
+                }
+
+                // Vykreslenie modrého výberu
+                if (selectionStart !== null && selectionEnd !== null) {
+                    const pixelX1 = ((selectionStart / duration) * canvas.width) * scaleX + posX;
+                    const pixelX2 = ((selectionEnd / duration) * canvas.width) * scaleX + posX;
+                    const x = Math.min(pixelX1, pixelX2);
+                    const width = Math.abs(pixelX2 - pixelX1);
+
+                    overlayCtx.fillStyle = 'rgba(56, 139, 253, 0.20)';
+                    overlayCtx.strokeStyle = '#388bfd'; overlayCtx.lineWidth = 2;
+                    overlayCtx.fillRect(x, 0, width, viewH);
+                    overlayCtx.strokeRect(x, 0, width, viewH);
+                }
+
+                // Vykreslenie červenej osi prehrávania
+                if (isPlaying) {
+                    const speed = parseFloat(playSpeedSelect.value);
+                    const currentPosInSeconds = playOffset + ((audioCtx.currentTime - playStartTime) * speed);
+
+                    if (currentPosInSeconds <= duration) {
+                        const viewX = ((currentPosInSeconds / duration) * canvas.width) * scaleX + posX;
+                        if (viewX >= 0 && viewX <= viewW) {
+                            overlayCtx.strokeStyle = '#ff3838'; overlayCtx.lineWidth = 2;
+                            overlayCtx.beginPath(); overlayCtx.moveTo(viewX, 0); overlayCtx.lineTo(viewX, viewH); overlayCtx.stroke();
+                            
+                            xCtx.fillStyle = '#ff3838'; xCtx.beginPath(); xCtx.arc(viewX, 3, 4, 0, 2 * Math.PI); xCtx.fill();
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>
